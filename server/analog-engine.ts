@@ -93,6 +93,39 @@ function rawHttpsRequest(
   });
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function rawHttpsRequestWith429Retry(
+  method: string,
+  url: string,
+  headers: Record<string, string>,
+  body?: string,
+  maxRetries = 4,
+  baseDelayMs = 1500
+): Promise<{ status: number; json: () => Promise<any>; text: () => Promise<string> }> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await rawHttpsRequest(method, url, headers, body);
+
+    if (res.status !== 429) {
+      return res;
+    }
+
+    if (attempt === maxRetries) {
+      return res;
+    }
+
+    const backoffMs = baseDelayMs * Math.pow(2, attempt);
+    const jitterMs = Math.floor(Math.random() * 400);
+    const delayMs = backoffMs + jitterMs;
+
+    console.warn(`GigaChat 429. Retry ${attempt + 1}/${maxRetries} in ${delayMs} ms`);
+
+    await sleep(delayMs);
+  }
+
+  throw new Error("Unexpected retry flow");
+}
+
 export async function gigachatComplete(prompt: string): Promise<string> {
   const token = await getAccessToken();
   const payload = JSON.stringify({
@@ -102,7 +135,7 @@ export async function gigachatComplete(prompt: string): Promise<string> {
     max_tokens: 4096,
   });
 
-  const res = await rawHttpsRequest(
+  const res = await rawHttpsRequestWith429Retry(
     "POST",
     CHAT_URL,
     {
